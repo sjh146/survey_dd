@@ -1,0 +1,29 @@
+# 설문 자동 응답 전략 설정 파일
+# 우선순위: by_variable > by_type > default
+#
+# select 옵션: first, last, random, all, none, 또는 [값1, 값2]
+# fill 옵션: dummy_text, empty, 또는 원하는 문자열
+
+strategies:
+  # 특정 변수명에 대한 직접 지정 (가장 높은 우선순위)
+  by_variable:
+    # SQ01: { select: "first" }
+    # MQ01: { select: "random", max: 2 }
+    pass
+
+  # 질문 유형별 기본 전략
+  by_type:
+    single: { select: "random" }
+    multi: { select: "random", min: 1, max: 3 }
+    open: { fill: "dummy_text" }
+    scale: { select: "middle" }
+    rank: { select: "random_order" }
+    group: { select: "random" }
+    combo: { select: "random" }
+
+  # 최종 기본값 (가장 낮은 우선순위)
+  default:
+    single: { select: "random" }
+    multi: { select: "random", min: 1 }
+    open: { fill: "테스트 응답입니다." }
+    unknown: { select: "skip" }
