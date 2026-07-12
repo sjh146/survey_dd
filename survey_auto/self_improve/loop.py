@@ -50,13 +50,13 @@ def _detect_and_fill_matrix(page) -> bool:
     return bool(filled)
 
 
-def _detect_and_fill_percentage(page) -> bool:
+def _detect_and_fill_percentage(page, container: str = ".answerBox") -> bool:
     """Detect percentage-sum tables and fill inputs that total 100."""
-    filled = page.evaluate("""() => {
+    filled = page.evaluate("""(container) => {
         const sumEl = document.querySelector('.sum_value');
         if (!sumEl) return false;
 
-        const inputs = document.querySelectorAll('.answerBox input[type=text]');
+        const inputs = document.querySelectorAll(container + ' input[type=text]');
         if (inputs.length < 2) return false;
 
         const currentSum = parseInt(sumEl.textContent) || 0;
@@ -73,31 +73,30 @@ def _detect_and_fill_percentage(page) -> bool:
             inputs[i].dispatchEvent(new Event('change', {bubbles: true}));
         }
         return n;
-    }""")
+    }""", container)
     if filled:
         logger.info("Percentage sum detected: filled %d inputs to total 100%%", filled)
         page.wait_for_timeout(1000)
     return bool(filled)
 
 
-def _fill_unfilled_inputs(page) -> int:
+def _fill_unfilled_inputs(page, container: str = "#vb_application") -> int:
     """Fill any unfilled text inputs the parser missed, using Playwright API for proper events.
     Returns the number of inputs filled."""
-    selectors = page.evaluate("""() => {
-        const inputs = document.querySelectorAll('#vb_application input[type=text]');
+    selectors = page.evaluate("""(container) => {
+        const inputs = document.querySelectorAll(container + ' input[type=text]');
         const result = [];
         inputs.forEach((inp, i) => {
             if (inp.disabled || inp.value !== '') return;
             const max = parseInt(inp.getAttribute('max')) || parseInt(inp.getAttribute('maxlength')) || 100;
             const min = parseInt(inp.getAttribute('min')) || 0;
             const val = Math.floor(Math.random() * (max - min + 1)) + min;
-            // Build a unique CSS selector for this input
-            let sel = '#vb_application input[type=text]';
-            const index = Array.from(document.querySelectorAll('#vb_application input[type=text]')).indexOf(inp);
+            let sel = container + ' input[type=text]';
+            const index = Array.from(document.querySelectorAll(container + ' input[type=text]')).indexOf(inp);
             result.push({sel: sel + ':nth-of-type(' + (index + 1) + ')', val: String(val)});
         });
         return result;
-    }""")
+    }""", container)
     count = 0
     for item in selectors:
         try:
@@ -161,6 +160,7 @@ class SelfImproveLoop:
             nav = NavigationController(br.page, pf, max_pages=self.max_pages)
             ex = ActionExecutor(br.page)
             agent = DeepSeekBrowserAgent(br.page)
+            container = br.get_config().question_container
             pd, qd = 0, 0
             prev_html = ""
             same_count = 0
@@ -207,7 +207,7 @@ class SelfImproveLoop:
                         if pg is not None: logger.info("Progress: page %d, %d%%", pd, pg)
                         continue
 
-                if _detect_and_fill_percentage(br.page):
+                if _detect_and_fill_percentage(br.page, container):
                     br.page.wait_for_timeout(500)
                     if nav.next_page():
                         pd += 1; self._no_ai_pages += 1; save_ckpt(pd, self.url); qd += 1
@@ -215,7 +215,7 @@ class SelfImproveLoop:
                         if pg is not None: logger.info("Progress: page %d, %d%%", pd, pg)
                         continue
 
-                if _fill_unfilled_inputs(br.page):
+                if _fill_unfilled_inputs(br.page, container):
                     br.page.wait_for_timeout(500)
                     if nav.next_page():
                         pd += 1; self._no_ai_pages += 1; save_ckpt(pd, self.url); qd += 1
