@@ -17,7 +17,6 @@ def save_html_snapshot(html: str, page_num: int, tag: str = "unknown") -> Path:
     return f
 
 def detect_new_patterns(html: str) -> list[dict]:
-    """Regex-based detection of unknown patterns. Returns pattern dicts."""
     patterns: list[dict] = []
     for m in re.finditer(r'<select[^>]*name=(["\'])(\w+)\1[^>]*>(.*?)</select>', html, re.I | re.S):
         var, opts = m.group(2), []
@@ -31,10 +30,17 @@ def detect_new_patterns(html: str) -> list[dict]:
         if itype in ("radio", "checkbox", "submit", "button", "hidden"): continue
         patterns.append({"type": "open", "variable": name, "options": [],
                          "text_inputs": [{"name": name, "label": "", "must": False, "input_type": itype}]})
+    qnum = re.search(r'<div[^>]*class=["\']questionNum[^"\']*["\'][^>]*>\s*(Q\d+[a-z]?)\.', html)
+    if qnum:
+        var = qnum.group(1)
+        text_inputs = []
+        for m in re.finditer(r'<input[^>]*inputtype=["\'](\w+)["\'][^>]*index=["\'](\d+)["\'][^>]*>', html):
+            text_inputs.append({"name": f"{var}_{m.group(2)}", "label": "", "must": False, "input_type": m.group(1)})
+        if text_inputs:
+            patterns.append({"type": "open", "variable": var, "options": [], "text_inputs": text_inputs})
     return patterns
 
 def detect_bs4_deep(html: str) -> list[dict]:
-    """BeautifulSoup deep detection. Requires beautifulsoup4."""
     try:
         from bs4 import BeautifulSoup
     except ImportError:
@@ -47,8 +53,18 @@ def detect_bs4_deep(html: str) -> list[dict]:
         if opts: patterns.append({"type": "select", "variable": name, "options": opts, "text_inputs": []})
     for inp in soup.find_all("input", type=lambda t: t and t.lower() not in ("radio","checkbox","hidden","submit","button")):
         name = inp.get("name", "")
-        if name: patterns.append({"type": "open", "variable": name, "options": [],
-                                  "text_inputs": [{"name": name, "label": "", "must": False, "input_type": inp.get("type","text")}]})
+        if name:
+            patterns.append({"type": "open", "variable": name, "options": [],
+                             "text_inputs": [{"name": name, "label": "", "must": False, "input_type": inp.get("type","text")}]})
+        elif inp.get("inputtype") and inp.get("index"):
+            qnum = soup.find("div", class_=lambda c: c and "questionNum" in c)
+            if qnum:
+                var = re.sub(r'[.\s]', '', qnum.get_text(strip=True))
+                text_inputs = [{"name": f"{var}_{i.get('index')}", "label": "", "must": False, "input_type": i.get("inputtype","text")}
+                               for i in soup.find_all("input", attrs={"inputtype": True, "index": True})]
+                if text_inputs:
+                    patterns.append({"type": "open", "variable": var, "options": [], "text_inputs": text_inputs})
+                    break
     for ta in soup.find_all("textarea"):
         name = ta.get("name", "")
         if name: patterns.append({"type": "open", "variable": name, "options": [],

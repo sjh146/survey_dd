@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import random
 import time
 from typing import Optional
 
@@ -88,14 +89,26 @@ class ActionExecutor:
                 logger.warning("Checkbox %s not found for %s", selected, question.variable)
 
     def _apply_open(self, question: Question, answer: Answer) -> None:
-        """Fill text input fields."""
         for text_input in (question.text_inputs or []):
-            text = answer.text_responses.get(text_input.name, "테스트 응답입니다.")
-            selector = _text_input_selector(text_input.name)
-            if self.page.locator(selector).count() > 0:
-                self.page.fill(selector, text)
-                time.sleep(ACTION_DELAY)
-                logger.debug("Filled %s with %s", text_input.name, text[:20])
+            text = answer.text_responses.get(text_input.name, "")
+            if text_input.input_type == "number":
+                text = str(random.randint(1, 15))
+            elif not text:
+                text = "좋습니다"
+
+            selectors = [
+                f'input[name="{text_input.name}"], textarea[name="{text_input.name}"]',
+            ]
+            parts = text_input.name.rsplit("_", 1)
+            if len(parts) == 2:
+                selectors.append(f'input[inputtype="{text_input.input_type}"][index="{parts[1]}"]')
+
+            for selector in selectors:
+                if self.page.locator(selector).count() > 0:
+                    self.page.fill(selector, text)
+                    time.sleep(ACTION_DELAY)
+                    logger.debug("Filled %s with %s", text_input.name, text)
+                    break
 
     def _fill_etc_if_needed(self, question: Question, selected: str, answer: Answer) -> None:
         """Fill the 'etc' text field for an option if it exists."""

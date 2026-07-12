@@ -63,7 +63,15 @@ def apply_extensions(html: str) -> list[Question]:
         try:
             mod_name = f"_ext_{vp.stem}"
             if mod_name in sys.modules:
-                mod = importlib.reload(sys.modules[mod_name])
+                try:
+                    mod = importlib.reload(sys.modules[mod_name])
+                except Exception:
+                    del sys.modules[mod_name]
+                    spec = importlib.util.spec_from_file_location(mod_name, vp)
+                    if spec is None or spec.loader is None: continue
+                    mod = importlib.util.module_from_spec(spec)
+                    spec.loader.exec_module(mod)
+                    sys.modules[mod_name] = mod
             else:
                 spec = importlib.util.spec_from_file_location(mod_name, vp)
                 if spec is None or spec.loader is None: continue

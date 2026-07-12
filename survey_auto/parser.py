@@ -155,64 +155,46 @@ def _extract_variable(html: str) -> Optional[str]:
 
 
 def _sm_extract_questions(html: str) -> list[Question]:
-    """Parse SurveyMachine #vb_application HTML into Question objects.
-
-    SurveyMachine structure:
-      .questionBox > .questionNum (e.g. "Q3."), .questionText
-      .answerBox.radioset / .checkboxset  > table.table-survey > tbody > tr > td > input
-    """
+    """Parse SurveyMachine #vb_application HTML into Question objects."""
     questions: list[Question] = []
 
-    # Find all answerBox elements and their preceding questionBox
     answer_boxes = list(re.finditer(
-        r'<div[^>]*class=["'']answerBox\s+(\w+)["''][^>]*>(.*?)</div>\s*</div>',
+        r'<div[^>]*class=["\']answerBox(?:\s+(\w+))?["\'][^>]*>(.*?)</div>\s*</div>',
         html,
         re.IGNORECASE | re.DOTALL,
     ))
 
     for box_match in answer_boxes:
         box_html = box_match.group(0)
-        answer_type = box_match.group(1)  # radioset, checkboxset, etc.
+        answer_type = box_match.group(1) or ""
 
-        # Extract variable name from inputs
         variable = _extract_variable(box_html)
+        if not variable:
+            variable = _sm_extract_variable_from_question_num(html, box_match.start())
+
         if not variable:
             continue
 
-        # Determine question type
-        if answer_type == "checkboxset" or "type=\"checkbox\"" in box_html.lower():
-            qtype = QuestionType.MULTI
-        elif answer_type == "radioset" or "type=\"radio\"" in box_html.lower():
-            # Count unique radio values to distinguish SINGLE vs SCALE
-            radio_values = set(re.findall(
-                r'<input[^>]*type=["'']radio["''][^>]*value=["''](\d+)["'']',
-                box_html,
-            ))
-            if len(radio_values) >= 5:
-                qtype = QuestionType.SCALE
-            else:
-                qtype = QuestionType.SINGLE
-        elif "type=\"text\"" in box_html.lower() or "textarea" in box_html.lower():
-            qtype = QuestionType.OPEN
-        else:
-            qtype = QuestionType.UNKNOWN
-
-        # Extract options from table cells
+        qtype = _sm_detect_type(answer_type, box_html)
         options = _sm_extract_options(box_html, variable)
-
-        # Extract title from preceding questionBox
         title = _sm_find_question_title(html, box_match.start())
+
+        text_inputs = []
+        if qtype in (QuestionType.OPEN, QuestionType.UNKNOWN):
+            text_inputs = _sm_extract_text_inputs(box_html, variable)
 
         questions.append(Question(
             variable=variable,
             qtype=qtype,
             options=options,
+            text_inputs=text_inputs or None,
             title=title,
         ))
 
-    # Fallback: if no answerBox found, try generic detection
     if not questions:
         variable = _extract_variable(html)
+        if not variable:
+            variable = _sm_extract_variable_from_question_num(html, 0)
         if variable:
             qtype = _detect_question_type(html)
             if qtype == QuestionType.SINGLE:
@@ -221,9 +203,11 @@ def _sm_extract_questions(html: str) -> list[Question]:
                 options = _extract_options_checkbox(html, variable)
             else:
                 options = []
+            text_inputs = _sm_extract_text_inputs(html, variable) if qtype in (QuestionType.OPEN, QuestionType.UNKNOWN) else []
             title = _sm_find_question_title(html, 0)
             questions.append(Question(
-                variable=variable, qtype=qtype, options=options, title=title,
+                variable=variable, qtype=qtype, options=options,
+                text_inputs=text_inputs or None, title=title,
             ))
 
     return questions
@@ -271,22 +255,56 @@ def _sm_extract_options(box_html: str, variable: str) -> list[Option]:
 
 
 def _sm_find_question_title(html: str, near_pos: int) -> str:
-    """Find the question title text from a nearby .questionBox."""
-    # Look backwards from near_pos for .questionBox
     before = html[:near_pos]
     qbox_match = re.search(
-        r'<div[^>]*class=["'']questionBox["''][^>]*>(.*?)</div>\s*</div>',
+        r'<div[^>]*class=["\']questionBox["\'][^>]*>(.*?)</div>\s*</div>',
         before,
         re.IGNORECASE | re.DOTALL,
     )
     if qbox_match:
         qbox_html = qbox_match.group(1)
-        # Remove questionNum
-        qbox_html = re.sub(r'<div[^>]*class=["'']questionNum["''][^>]*>.*?</div>', '', qbox_html, flags=re.DOTALL)
+        qbox_html = re.sub(r'<div[^>]*class=["\']questionNum["\'][^>]*>.*?</div>', '', qbox_html, flags=re.DOTALL)
         title = re.sub(r'<[^>]+>', '', qbox_html).strip()
         title = re.sub(r'\s+', ' ', title)
         return title[:200]
     return ""
+
+
+def _sm_extract_variable_from_question_num(html: str, near_pos: int) -> Optional[str]:
+    before = html[:near_pos + 500]
+    m = re.search(r'<div[^>]*class=["\']questionNum[^"\']*["\'][^>]*>\s*(Q\d+[a-z]?)\.', before)
+    if m:
+        return m.group(1)
+    return None
+
+
+def _sm_detect_type(answer_type: str, box_html: str) -> QuestionType:
+    lower = box_html.lower()
+    if answer_type == "checkboxset" or 'type="checkbox"' in lower:
+        return QuestionType.MULTI
+    if answer_type == "radioset" or 'type="radio"' in lower:
+        radio_values = set(re.findall(
+            r'<input[^>]*type=["\']radio["\'][^>]*value=["\'](\d+)["\']', box_html))
+        return QuestionType.SCALE if len(radio_values) >= 5 else QuestionType.SINGLE
+    if 'inputtype="number"' in lower or 'type="text"' in lower or "<textarea" in lower:
+        return QuestionType.OPEN
+    if 'type="range"' in lower or 'scalebtn' in lower:
+        return QuestionType.SCALE
+    return QuestionType.UNKNOWN
+
+
+def _sm_extract_text_inputs(box_html: str, variable: str) -> list[TextInput]:
+    inputs: list[TextInput] = []
+    for m in re.finditer(r'<input[^>]*inputtype=["\'](\w+)["\'][^>]*index=["\'](\d+)["\'][^>]*>', box_html):
+        itype = m.group(1)
+        idx = m.group(2)
+        name = f"{variable}_{idx}"
+        inputs.append(TextInput(name=name, label="", must=False, input_type=itype))
+    if not inputs:
+        for m in re.finditer(r'<(input|textarea)[^>]*name=["\'](\w+)_\d+["\'][^>]*>', box_html):
+            name = m.group(2) + "_" + re.search(r'name=["\'](\w+)_\d+["\']', m.group(0)).group(0).split("_")[-1].strip('"\'')
+            inputs.append(TextInput(name=name, label="", must=False, input_type="text"))
+    return inputs
 
 
 # ── Main parser (platform-aware) ──────────────────────────────────

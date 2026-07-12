@@ -113,7 +113,7 @@ class BrowserManager:
                 f"document.querySelector('{selector}')?.children.length > 0",
                 timeout=timeout_ms,
             )
-            self.page.wait_for_timeout(500)  # Wait for AJAX rendering to complete
+            self.page.wait_for_timeout(1500)
             return True
         except Exception as exc:
             logger.warning("Question body did not render: %s", exc)

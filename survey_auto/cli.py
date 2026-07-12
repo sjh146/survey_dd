@@ -123,9 +123,14 @@ def run(
     if self_improve:
         loop = SelfImproveLoop(url=url, headless=not visible, timeout=timeout,
                                max_pages=max_pages, daemon=daemon)
-        ok = loop.run()
+        r = loop.run()
+        ok = r.get("success", False) if isinstance(r, dict) else r
         msg = "completed" if ok else "failed"
+        ai = r.get("ai_pages", 0) if isinstance(r, dict) else 0
+        no_ai = r.get("no_ai_pages", 0) if isinstance(r, dict) else 0
         click.echo(f"Self-improve: {msg}")
+        click.echo(f"  Pages solved by AI (DeepSeek): {ai}")
+        click.echo(f"  Pages solved without AI (parser/executor/DOM): {no_ai}")
         sys.exit(0 if ok else 1)
 
     browser = BrowserManager(headless=not visible, timeout=timeout * 1000, platform=selected_platform)

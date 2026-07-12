@@ -92,25 +92,23 @@ class NavigationController:
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:
-                self.page.click(self._config.next_button)
-                # Wait for navigation / rendering
-                if self._config.loader_selector:
-                    try:
-                        self.page.wait_for_selector(
-                            self._config.loader_selector, state="hidden", timeout=5000
-                        )
-                    except Exception:
-                        pass
-                self.page.wait_for_timeout(1000)
-                # Wait for new question container to render
-                try:
-                    self.page.wait_for_function(
-                        f"document.querySelector('{self._config.question_container}')"
-                        " && document.querySelector('{self._config.question_container}').children.length > 0",
-                        timeout=10000,
-                    )
-                except Exception:
-                    pass
+                old_qnum = self.page.evaluate(
+                    "() => (document.querySelector('.questionNum') || {}).textContent || ''"
+                ).strip()
+
+                self.page.evaluate(
+                    "() => { if (typeof SurveyLoader !== 'undefined') SurveyLoader.next(); }"
+                )
+                self.page.wait_for_timeout(2000)
+
+                new_qnum = self.page.evaluate(
+                    "() => (document.querySelector('.questionNum') || {}).textContent || ''"
+                ).strip()
+
+                if old_qnum == new_qnum and old_qnum:
+                    logger.warning("Page did not change (still %s)", old_qnum)
+                    return False
+
                 self._pages_visited += 1
                 logger.info("Navigated to page %d", self._pages_visited)
                 return True
