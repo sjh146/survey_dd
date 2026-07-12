@@ -81,37 +81,56 @@ def _detect_and_fill_percentage(page, container: str = ".answerBox") -> bool:
 
 
 def _fill_unfilled_inputs(page, container: str = "#vb_application") -> int:
-    """Fill any unfilled text inputs the parser missed, using Playwright API for proper events.
+    """Fill any unfilled text inputs the parser missed, using JS evaluate for DOM events.
     Returns the number of inputs filled."""
-    selectors = page.evaluate("""(container) => {
+    count = page.evaluate("""(container) => {
         const inputs = document.querySelectorAll(container + ' input[type=text]');
-        const result = [];
-        inputs.forEach((inp, i) => {
+        let filled = 0;
+        inputs.forEach((inp) => {
             if (inp.disabled || inp.value !== '') return;
-            const max = parseInt(inp.getAttribute('max')) || parseInt(inp.getAttribute('maxlength')) || 100;
-            const min = parseInt(inp.getAttribute('min')) || 0;
-            const val = Math.floor(Math.random() * (max - min + 1)) + min;
-            let sel = container + ' input[type=text]';
-            const index = Array.from(document.querySelectorAll(container + ' input[type=text]')).indexOf(inp);
-            result.push({sel: sel + ':nth-of-type(' + (index + 1) + ')', val: String(val)});
+            const inputtype = (inp.getAttribute('inputtype') || '').toLowerCase();
+            let val;
+
+            if (inputtype === 'number') {
+                /* date/count fields: use small safe values to avoid
+                   cross-question validation errors (e.g. SQ4 > SQ2) */
+                val = '1';
+            } else if (typeof SurveyLoader !== 'undefined' && SurveyLoader.__ary_madeModules) {
+                /* Match input to a module by finding the nearest .questionNum,
+                   then use getData().DATA for InputNumber constraints */
+                let found = false;
+                const qNumEl = inp.closest('.answerBox')?.previousElementSibling?.querySelector('.questionNum')
+                    || inp.closest('.questionBox')?.parentElement?.querySelector('.questionNum');
+                const qNumText = qNumEl ? qNumEl.textContent.trim().replace('.', '') : '';
+
+                for (const mod of SurveyLoader.__ary_madeModules) {
+                    const fullData = mod.getData ? mod.getData() : {};
+                    const d = fullData.DATA || {};
+                    if (d.MODULE_TYPE === 'InputNumber' && d.NUM && d.NUM.replace('.', '') === qNumText) {
+                        const minVal = parseInt(d.MIN_VALUE) || 0;
+                        const maxVal = parseInt(d.MAX_VALUE) || 10000;
+                        val = String(Math.floor((minVal + maxVal) / 2));
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found) {
+                    val = 'A';
+                }
+            } else {
+                val = 'A';
+            }
+
+            inp.value = val;
+            inp.dispatchEvent(new Event('input', {bubbles: true}));
+            inp.dispatchEvent(new Event('change', {bubbles: true}));
+            inp.dispatchEvent(new Event('keyup', {bubbles: true}));
+            filled++;
         });
-        return result;
+        return filled;
     }""", container)
-    count = 0
-    for item in selectors:
-        try:
-            loc = page.locator(item['sel'])
-            if loc.count() > 0:
-                loc.click()
-                page.wait_for_timeout(200)
-                page.keyboard.press('Control+a')
-                page.keyboard.type(item['val'], delay=50)
-                page.wait_for_timeout(200)
-                count += 1
-        except Exception as exc:
-            logger.debug("Failed to fill input %s: %s", item['sel'], exc)
     if count:
-        logger.info("Auto-filled %d unfilled text inputs via Playwright", count)
+        logger.info("Auto-filled %d unfilled text inputs via DOM events", count)
         page.wait_for_timeout(500)
     return count
 
@@ -168,6 +187,17 @@ class SelfImproveLoop:
             if sp: logger.info("Resume from page %d", sp)
 
             while True:
+                # Catch browser/page closed — SurveyMachine closes popup on completion
+                try:
+                    _html = br.get_page_html()
+                except Exception as page_err:
+                    if "closed" in str(page_err).lower() or "target page" in str(page_err).lower():
+                        logger.info("Survey completed: browser page closed (%s)", page_err)
+                        self._p_total += pd; self._q_total += qd
+                        return {"success": True, "pages": pd, "questions": qd,
+                                "ai_pages": self._ai_pages, "no_ai_pages": self._no_ai_pages}
+                    raise
+
                 if nav.pages_visited < sp:
                     if not nav.next_page():
                         logger.warning("Stuck at page %d during skip, trying DeepSeek", nav.pages_visited)
@@ -181,7 +211,7 @@ class SelfImproveLoop:
                     continue
 
                 fmt = pf.value if pf.value in ("surveymachine", "nielseniq") else "kiwi"
-                qs = SurveyParser(br.get_page_html(), platform=fmt).parse()
+                qs = SurveyParser(_html, platform=fmt).parse()
                 if qs:
                     for q in qs:
                         if q.options or q.text_inputs:
