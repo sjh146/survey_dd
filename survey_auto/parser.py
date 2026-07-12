@@ -154,30 +154,64 @@ def _extract_variable(html: str) -> Optional[str]:
 # ── SurveyMachine parser ──────────────────────────────────────────
 
 
+def _extract_balanced_html(html: str, start_tag_pattern: str) -> str:
+    """Extract HTML starting from a tag matched by pattern, with balanced div counting."""
+    m = re.search(start_tag_pattern, html, re.IGNORECASE)
+    if not m:
+        return ""
+    start = m.start()
+    depth = 0
+    i = start
+    in_tag = False
+    while i < len(html):
+        if html[i] == '<':
+            in_tag = True
+            tag_end = html.find('>', i)
+            if tag_end == -1:
+                break
+            tag_text = html[i:tag_end + 1]
+            if tag_text.startswith('</'):
+                depth -= 1
+            elif not tag_text.endswith('/>'):
+                depth += 1
+            i = tag_end + 1
+            if depth <= 0:
+                return html[start:i]
+        else:
+            i += 1
+    return html[start:]
+
+
 def _sm_extract_questions(html: str) -> list[Question]:
     """Parse SurveyMachine #vb_application HTML into Question objects."""
     questions: list[Question] = []
 
-    answer_boxes = list(re.finditer(
-        r'<div[^>]*class=["\']answerBox(?:\s+(\w+))?["\'][^>]*>(.*?)</div>\s*</div>',
+    answer_boxes = []
+    for m in re.finditer(
+        r'<div[^>]*class=["\']answerBox(?:\s+(\w+))?["\'][^>]*>',
         html,
-        re.IGNORECASE | re.DOTALL,
-    ))
+        re.IGNORECASE,
+    ):
+        answer_type = m.group(1) or ""
+        box_html = _extract_balanced_html(html[m.start():], r'<div[^>]*class=["\']answerBox')
+        answer_boxes.append((m.start(), box_html, answer_type))
 
-    for box_match in answer_boxes:
-        box_html = box_match.group(0)
-        answer_type = box_match.group(1) or ""
+    for box_start, box_html, answer_type in answer_boxes:
 
         variable = _extract_variable(box_html)
         if not variable:
-            variable = _sm_extract_variable_from_question_num(html, box_match.start())
+            variable = _sm_extract_variable_from_question_num(html, box_start)
+        if not variable:
+            parent_id = re.search(r'id=["\']((?:SQ|Q)\w+)["\']', html[max(0, box_start - 500):box_start])
+            if parent_id:
+                variable = parent_id.group(1)
 
         if not variable:
             continue
 
         qtype = _sm_detect_type(answer_type, box_html)
         options = _sm_extract_options(box_html, variable)
-        title = _sm_find_question_title(html, box_match.start())
+        title = _sm_find_question_title(html, box_start)
 
         text_inputs = []
         if qtype in (QuestionType.OPEN, QuestionType.UNKNOWN):
@@ -217,8 +251,6 @@ def _sm_extract_options(box_html: str, variable: str) -> list[Option]:
     """Extract options from a SurveyMachine answer box HTML."""
     options: list[Option] = []
 
-    # Find all input elements with their labels
-    # Pattern: <td>...<input ... value="X">...<label>...</label>...</td>
     td_pattern = re.compile(
         r'<td[^>]*>(.*?)</td>',
         re.IGNORECASE | re.DOTALL,
@@ -227,7 +259,6 @@ def _sm_extract_options(box_html: str, variable: str) -> list[Option]:
     for td_match in td_pattern.finditer(box_html):
         td_html = td_match.group(1)
 
-        # Find input
         input_match = re.search(
             r'<input[^>]*type=["''](?:radio|checkbox)["''][^>]*value=["'']([^"'']+)["''][^>]*>',
             td_html,
@@ -238,19 +269,36 @@ def _sm_extract_options(box_html: str, variable: str) -> list[Option]:
 
         value = input_match.group(1)
 
-        # Extract label text
         label = ""
-        # Try <label> text
         label_tag = re.search(r'<label[^>]*>(.*?)</label>', td_html, re.DOTALL)
         if label_tag:
             label = re.sub(r'<[^>]+>', '', label_tag.group(1)).strip()
         else:
-            # Get text from <th> row
             label = re.sub(r'<[^>]+>', ' ', td_html).strip()
 
         label = re.sub(r'\s+', ' ', label).strip()
         options.append(Option(value=value, label=label[:100]))
 
+    if not options:
+        options = _extract_options_radio(box_html, variable) or _extract_options_checkbox(box_html, variable)
+
+    if not options:
+        options = _sm_extract_select_options(box_html)
+
+    return options
+
+
+def _sm_extract_select_options(box_html: str) -> list[Option]:
+    options: list[Option] = []
+    select_match = re.search(r'<select[^>]*>(.*?)</select>', box_html, re.DOTALL | re.IGNORECASE)
+    if not select_match:
+        return options
+    for m in re.finditer(r'<option[^>]*value=["\']([^"\']+)["\'][^>]*>(.*?)</option>', select_match.group(1), re.DOTALL):
+        val = m.group(1)
+        if not val:
+            continue
+        label = re.sub(r'<[^>]+>', '', m.group(2)).strip()
+        options.append(Option(value=val, label=label))
     return options
 
 
@@ -280,6 +328,8 @@ def _sm_extract_variable_from_question_num(html: str, near_pos: int) -> Optional
 
 def _sm_detect_type(answer_type: str, box_html: str) -> QuestionType:
     lower = box_html.lower()
+    if '<select' in lower:
+        return QuestionType.SINGLE
     if answer_type == "checkboxset" or 'type="checkbox"' in lower:
         return QuestionType.MULTI
     if answer_type == "radioset" or 'type="radio"' in lower:

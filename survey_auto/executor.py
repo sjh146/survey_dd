@@ -64,13 +64,18 @@ class ActionExecutor:
             logger.info("Unsupported question type: %s", question.qtype)
 
     def _apply_single(self, question: Question, answer: Answer) -> None:
-        """Select a radio button."""
         for selected in answer.selected_values:
+            select_sel = f'select[name="{question.variable}"], #{question.variable} select'
+            if self.page.locator(select_sel).count() > 0:
+                self.page.select_option(select_sel, value=selected)
+                time.sleep(ACTION_DELAY)
+                logger.debug("Selected %s = %s (dropdown)", question.variable, selected)
+                self._fill_etc_if_needed(question, selected, answer)
+                return
             selector = _radio_value_selector(question.variable, selected)
             if self.page.locator(selector).count() > 0:
                 self.page.click(selector)
                 time.sleep(ACTION_DELAY)
-                # Handle 'etc' field if present
                 self._fill_etc_if_needed(question, selected, answer)
                 logger.debug("Selected %s = %s", question.variable, selected)
             else:
