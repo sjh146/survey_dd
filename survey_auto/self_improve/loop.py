@@ -180,7 +180,7 @@ class SelfImproveLoop:
                             break
                     continue
 
-                fmt = "surveymachine" if pf.value == "surveymachine" else "kiwi"
+                fmt = pf.value if pf.value in ("surveymachine", "nielseniq") else "kiwi"
                 qs = SurveyParser(br.get_page_html(), platform=fmt).parse()
                 if qs:
                     for q in qs:

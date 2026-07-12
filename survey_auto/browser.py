@@ -72,15 +72,16 @@ class BrowserManager:
             return self._platform
 
         page = self.page
-        # Check for SurveyMachine markers
         if page.query_selector("#vb_application"):
             self._platform = Platform.SURVEY_MACHINE
             logger.info("Detected platform: SurveyMachine")
+        elif page.query_selector(".survey-container") or page.query_selector(".survey-body"):
+            self._platform = Platform.NIELSEN_IQ
+            logger.info("Detected platform: NielsenIQ")
         elif page.query_selector("#question_body") or page.query_selector("#kiwi_progress"):
             self._platform = Platform.KIWI
             logger.info("Detected platform: KiwiSurvey")
         else:
-            # Default to KiwiSurvey (backward compatible)
             self._platform = Platform.KIWI
             logger.info("Platform auto-detect defaulting to KiwiSurvey")
 

@@ -321,14 +321,14 @@ class SurveyParser:
         self.platform = platform
 
     def parse(self) -> list[Question]:
-        """Parse the HTML and return a list of identified questions."""
         if not self.html or not self.html.strip():
             logger.info("Empty HTML, no questions to parse")
             return []
 
         if self.platform == "surveymachine":
             return self._parse_surveymachine()
-
+        if self.platform == "nielseniq":
+            return self._parse_nielseniq()
         return self._parse_kiwi()
 
     def _parse_surveymachine(self) -> list[Question]:
@@ -364,9 +364,8 @@ class SurveyParser:
             return [Question(variable=variable, qtype=qtype, options=options, text_inputs=text_inputs or None, title=title)]
 
     def _extract_title_kiwi(self) -> str:
-        """Extract KiwiSurvey question title from HTML."""
         title_match = re.search(
-            r'<div[^>]*id=["'']qtitle["''][^>]*>(.*?)</div>',
+            r'<div[^>]*id=["\']qtitle["\'][^>]*>(.*?)</div>',
             self.html,
             re.IGNORECASE | re.DOTALL,
         )
@@ -374,3 +373,36 @@ class SurveyParser:
             text = re.sub(r'<[^>]+>', '', title_match.group(1)).strip()
             return text
         return ""
+
+    def _parse_nielseniq(self) -> list[Question]:
+        questions: list[Question] = []
+        for m in re.finditer(
+            r'<div[^>]*class=["\']question["\'][^>]*>(.*?)</div>\s*(?:</div>)*',
+            self.html, re.DOTALL,
+        ):
+            q_html = m.group(1)
+            variable = None
+            for p in [
+                r'name=["\'](\w+)',
+                r'id=["\'](\w+)',
+                r'data-question=["\'](\w+)',
+            ]:
+                vm = re.search(p, q_html)
+                if vm:
+                    variable = vm.group(1)
+                    break
+            if not variable:
+                continue
+            qtype = _detect_question_type(q_html)
+            options = _extract_options_radio(q_html, variable) if qtype == QuestionType.SINGLE else _extract_options_checkbox(q_html, variable) if qtype == QuestionType.MULTI else []
+            text_inputs = _find_text_inputs(q_html, variable) if qtype in (QuestionType.OPEN, QuestionType.UNKNOWN) else None
+            questions.append(Question(variable=variable, qtype=qtype, options=options, text_inputs=text_inputs))
+
+        if not questions:
+            variable = _extract_variable(self.html)
+            if variable:
+                qtype = _detect_question_type(self.html)
+                options = _extract_options_radio(self.html, variable) if qtype == QuestionType.SINGLE else _extract_options_checkbox(self.html, variable) if qtype == QuestionType.MULTI else []
+                text_inputs = _find_text_inputs(self.html, variable) if qtype in (QuestionType.OPEN, QuestionType.UNKNOWN) else None
+                questions.append(Question(variable=variable, qtype=qtype, options=options, text_inputs=text_inputs))
+        return questions

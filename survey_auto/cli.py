@@ -74,7 +74,7 @@ strategies:
 @click.option("--verbose", is_flag=True, help="Enable debug logging")
 @click.option("--list-strategies", is_flag=True, help="Print strategy template and exit")
 @click.option(
-    "--platform", type=click.Choice(["auto", "kiwi", "surveymachine"]),
+    "--platform", type=click.Choice(["auto", "kiwi", "surveymachine", "nielseniq"]),
     default="auto", help="Survey platform (auto-detect by default)",
 )
 @click.option("--self-improve", is_flag=True, help="Enable self-improving loop with auto-delegation")
@@ -108,6 +108,7 @@ def run(
         "auto": Platform.AUTO,
         "kiwi": Platform.KIWI,
         "surveymachine": Platform.SURVEY_MACHINE,
+        "nielseniq": Platform.NIELSEN_IQ,
     }
     selected_platform = platform_map[platform]
 

@@ -27,6 +27,7 @@ class Platform(str, Enum):
 
     KIWI = "kiwi"
     SURVEY_MACHINE = "surveymachine"
+    NIELSEN_IQ = "nielseniq"
     AUTO = "auto"
 
 
@@ -58,6 +59,14 @@ PLATFORM_CONFIGS: dict[Platform, SurveyConfig] = {
         loader_selector="",
         progress_selector=".progressbar .bar",
         end_patterns=("END", "complete"),
+    ),
+    Platform.NIELSEN_IQ: SurveyConfig(
+        question_container=".survey-body",
+        next_button="button.next, input[type=submit], .btn-next",
+        prev_button="button.prev, .btn-prev",
+        loader_selector=".loading, .survey-loading",
+        progress_selector=".progress-bar, .survey-progress",
+        end_patterns=("complete", "thank", "END"),
     ),
 }
 

@@ -47,6 +47,14 @@ class NavigationController:
                 return True
         except Exception:
             pass
+        # Check for error page (NielsenIQ, etc.)
+        try:
+            err = self.page.locator(".survey-error, .error-page, .error-text")
+            if err.count() > 0 and err.is_visible():
+                logger.info("Survey end detected: error page shown")
+                return True
+        except Exception:
+            pass
         # SurveyMachine: check if next button is gone
         if self.platform == Platform.SURVEY_MACHINE:
             try:
