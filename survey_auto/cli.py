@@ -15,6 +15,7 @@ from survey_auto.models import Platform
 from survey_auto.navigator import NavigationController
 from survey_auto.parser import SurveyParser
 from survey_auto.strategies import StrategyEngine
+from survey_auto.self_improve import SelfImproveLoop
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +77,8 @@ strategies:
     "--platform", type=click.Choice(["auto", "kiwi", "surveymachine"]),
     default="auto", help="Survey platform (auto-detect by default)",
 )
+@click.option("--self-improve", is_flag=True, help="Enable self-improving loop with auto-delegation")
+@click.option("--daemon", is_flag=True, help="Run in daemon mode (infinite loop with work order monitoring)")
 def run(
     url: Optional[str],
     strategy: Optional[str],
@@ -86,6 +89,8 @@ def run(
     verbose: bool,
     list_strategies: bool,
     platform: str,
+    self_improve: bool,
+    daemon: bool,
 ) -> None:
     """Automate a survey: read questions, fill answers, navigate pages."""
     _setup_logging(verbose, output)
@@ -115,7 +120,14 @@ def run(
         strategy_engine = StrategyEngine()
         click.echo("No strategy file found, using random fallback", err=True)
 
-    # Initialize browser
+    if self_improve:
+        loop = SelfImproveLoop(url=url, headless=not visible, timeout=timeout,
+                               max_pages=max_pages, daemon=daemon)
+        ok = loop.run()
+        msg = "completed" if ok else "failed"
+        click.echo(f"Self-improve: {msg}")
+        sys.exit(0 if ok else 1)
+
     browser = BrowserManager(headless=not visible, timeout=timeout * 1000, platform=selected_platform)
     try:
         browser.start()
