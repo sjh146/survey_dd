@@ -1,0 +1,32 @@
+services:
+  survey:
+    build: .
+    image: survey-dd:latest
+    environment:
+      - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
+    volumes:
+      - ./strategies:/app/strategies
+      - survey-data:/app/.omo
+    networks:
+      - survey-net
+
+  jenkins:
+    image: jenkins/jenkins:lts
+    container_name: jenkins
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    volumes:
+      - jenkins-data:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+    environment:
+      - JAVA_OPTS=-Djenkins.install.runSetupWizard=false
+    networks:
+      - survey-net
+
+volumes:
+  jenkins-data:
+  survey-data:
+
+networks:
+  survey-net:
