@@ -1,0 +1,14 @@
+{
+  "id": "wo_20260712_164023_845091",
+  "status": "failed",
+  "created_at": "2026-07-12T16:40:23.845116",
+  "html_file": "/home/dduckbeagy/survey_dd/.omo/unknown_patterns/page0_unknown_20260712_164023.html",
+  "context": {
+    "url": "https://v3.surveymachine.co.kr/SM_NEW/?SURVEY_NUM=18636&START_TYPE=BANNER&UID=CLOUDPANEL2078160&VAR1=158509&VAR2=CLOUDPANEL&SEC_KEY=qwCUVuzeErsFYx0MZ09F8Zot9guSpe8mAjs9G59J3GQ%3D",
+    "page": 0
+  },
+  "agent_type": "jenkins",
+  "result": {
+    "error": "auto-detect failed"
+  }
+}

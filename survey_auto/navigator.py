@@ -12,6 +12,10 @@ from playwright.sync_api import Page
 from survey_auto.browser import BrowserManager
 from survey_auto.models import PLATFORM_CONFIGS, Platform
 
+
+class SurveyCompleted(Exception):
+    pass
+
 logger = logging.getLogger(__name__)
 
 MAX_RETRIES = 2
@@ -121,6 +125,9 @@ class NavigationController:
                 logger.info("Navigated to page %d", self._pages_visited)
                 return True
             except Exception as exc:
+                msg = str(exc).lower()
+                if "closed" in msg or "target page" in msg:
+                    raise SurveyCompleted(str(exc))
                 logger.warning(
                     "Next page attempt %d/%d failed: %s",
                     attempt, MAX_RETRIES, exc,

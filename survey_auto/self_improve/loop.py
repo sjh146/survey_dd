@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging, time
 from survey_auto.browser import BrowserManager
 from survey_auto.executor import ActionExecutor
-from survey_auto.navigator import NavigationController
+from survey_auto.navigator import NavigationController, SurveyCompleted
 from survey_auto.parser import SurveyParser
 from survey_auto.strategies import StrategyEngine
 from survey_auto.self_improve.checkpoint import clear as clear_ckpt, load as load_ckpt, save as save_ckpt
@@ -183,85 +183,80 @@ class SelfImproveLoop:
             pd, qd = 0, 0
             prev_html = ""
             same_count = 0
+            fmt = pf.value if pf.value in ("surveymachine", "nielseniq") else "kiwi"
             sp = load_ckpt(self.url) or 0
             if sp: logger.info("Resume from page %d", sp)
 
             while True:
-                # Catch browser/page closed — SurveyMachine closes popup on completion
                 try:
-                    _html = br.get_page_html()
-                except Exception as page_err:
-                    if "closed" in str(page_err).lower() or "target page" in str(page_err).lower():
-                        logger.info("Survey completed: browser page closed (%s)", page_err)
-                        self._p_total += pd; self._q_total += qd
+                    if nav.pages_visited < sp:
+                        if not nav.next_page():
+                            logger.warning("Stuck at page %d during skip, trying DeepSeek", nav.pages_visited)
+                            result = agent.solve_page(progress_pct=nav.get_progress(), page_num=pd)
+                            if result.get("success") and result.get("page_changed"):
+                                logger.info("DeepSeek resolved skip stuck: %s->%s", result.get("prev_qnum"), result.get("new_qnum"))
+                                self._ai_pages += 1
+                                continue
+                            else:
+                                break
+                        continue
+
+                    qs = SurveyParser(br.get_page_html(), platform=fmt).parse()
+                    if qs:
+                        for q in qs:
+                            if q.options or q.text_inputs:
+                                a = se.get_answer(q)
+                                logger.info("  %s (%s): %s", q.variable, q.qtype.value, a.selected_values or "(text)")
+                                ex.fill_answers([q], [a]); qd += 1
+
+                    if nav.is_survey_ended():
                         return {"success": True, "pages": pd, "questions": qd,
                                 "ai_pages": self._ai_pages, "no_ai_pages": self._no_ai_pages}
-                    raise
 
-                if nav.pages_visited < sp:
-                    if not nav.next_page():
-                        logger.warning("Stuck at page %d during skip, trying DeepSeek", nav.pages_visited)
-                        result = agent.solve_page(progress_pct=nav.get_progress(), page_num=pd)
-                        if result.get("success") and result.get("page_changed"):
-                            logger.info("DeepSeek resolved skip stuck: %s->%s", result.get("prev_qnum"), result.get("new_qnum"))
-                            self._ai_pages += 1
+                    if nav.next_page():
+                        pd += 1; self._no_ai_pages += 1; save_ckpt(pd, self.url)
+                        pg = nav.get_progress()
+                        if pg is not None: logger.info("Progress: page %d, %d%%", pd, pg)
+                        continue
+
+                    if _detect_and_fill_matrix(br.page):
+                        br.page.wait_for_timeout(500)
+                        if nav.next_page():
+                            pd += 1; self._no_ai_pages += 1; save_ckpt(pd, self.url); qd += 1
+                            pg = nav.get_progress()
+                            if pg is not None: logger.info("Progress: page %d, %d%%", pd, pg)
                             continue
-                        else:
-                            break
-                    continue
 
-                fmt = pf.value if pf.value in ("surveymachine", "nielseniq") else "kiwi"
-                qs = SurveyParser(_html, platform=fmt).parse()
-                if qs:
-                    for q in qs:
-                        if q.options or q.text_inputs:
-                            a = se.get_answer(q)
-                            logger.info("  %s (%s): %s", q.variable, q.qtype.value, a.selected_values or "(text)")
-                            ex.fill_answers([q], [a]); qd += 1
+                    if _detect_and_fill_percentage(br.page, container):
+                        br.page.wait_for_timeout(500)
+                        if nav.next_page():
+                            pd += 1; self._no_ai_pages += 1; save_ckpt(pd, self.url); qd += 1
+                            pg = nav.get_progress()
+                            if pg is not None: logger.info("Progress: page %d, %d%%", pd, pg)
+                            continue
 
-                if nav.is_survey_ended():
+                    if _fill_unfilled_inputs(br.page, container):
+                        br.page.wait_for_timeout(500)
+                        if nav.next_page():
+                            pd += 1; self._no_ai_pages += 1; save_ckpt(pd, self.url); qd += 1
+                            pg = nav.get_progress()
+                            if pg is not None: logger.info("Progress: page %d, %d%%", pd, pg)
+                            continue
+
+                    logger.warning("Navigator stuck, delegating to DeepSeek")
+                    result = agent.solve_page(progress_pct=nav.get_progress(), page_num=pd)
+                    if result.get("success") and result.get("page_changed"):
+                        logger.info("DeepSeek solved: %s->%s", result.get("prev_qnum"), result.get("new_qnum"))
+                        pd += 1; self._ai_pages += 1; save_ckpt(pd, self.url); qd += 1
+                        continue
+                    else:
+                        logger.warning("DeepSeek failed: %s", result.get("error"))
+                        break
+                except SurveyCompleted:
+                    logger.info("Survey completed after %d pages, %d questions", pd, qd)
+                    self._p_total += pd; self._q_total += qd
                     return {"success": True, "pages": pd, "questions": qd,
                             "ai_pages": self._ai_pages, "no_ai_pages": self._no_ai_pages}
-
-                if nav.next_page():
-                    pd += 1; self._no_ai_pages += 1; save_ckpt(pd, self.url)
-                    pg = nav.get_progress()
-                    if pg is not None: logger.info("Progress: page %d, %d%%", pd, pg)
-                    continue
-
-                if _detect_and_fill_matrix(br.page):
-                    br.page.wait_for_timeout(500)
-                    if nav.next_page():
-                        pd += 1; self._no_ai_pages += 1; save_ckpt(pd, self.url); qd += 1
-                        pg = nav.get_progress()
-                        if pg is not None: logger.info("Progress: page %d, %d%%", pd, pg)
-                        continue
-
-                if _detect_and_fill_percentage(br.page, container):
-                    br.page.wait_for_timeout(500)
-                    if nav.next_page():
-                        pd += 1; self._no_ai_pages += 1; save_ckpt(pd, self.url); qd += 1
-                        pg = nav.get_progress()
-                        if pg is not None: logger.info("Progress: page %d, %d%%", pd, pg)
-                        continue
-
-                if _fill_unfilled_inputs(br.page, container):
-                    br.page.wait_for_timeout(500)
-                    if nav.next_page():
-                        pd += 1; self._no_ai_pages += 1; save_ckpt(pd, self.url); qd += 1
-                        pg = nav.get_progress()
-                        if pg is not None: logger.info("Progress: page %d, %d%%", pd, pg)
-                        continue
-
-                logger.warning("Navigator stuck, delegating to DeepSeek")
-                result = agent.solve_page(progress_pct=nav.get_progress(), page_num=pd)
-                if result.get("success") and result.get("page_changed"):
-                    logger.info("DeepSeek solved: %s->%s", result.get("prev_qnum"), result.get("new_qnum"))
-                    pd += 1; self._ai_pages += 1; save_ckpt(pd, self.url); qd += 1
-                    continue
-                else:
-                    logger.warning("DeepSeek failed: %s", result.get("error"))
-                    break
 
             self._p_total += pd; self._q_total += qd
             return {"success": False, "error": "loop ended",
