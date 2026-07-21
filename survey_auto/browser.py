@@ -64,7 +64,7 @@ class BrowserManager:
         self.page.goto(url, wait_until="networkidle")
 
     def detect_platform(self) -> Platform:
-        """Auto-detect the survey platform based on DOM elements present.
+        """Auto-detect the survey platform based on URL + DOM elements.
 
         Returns the detected Platform and caches it.
         """
@@ -72,31 +72,42 @@ class BrowserManager:
             return self._platform
 
         page = self.page
-        
-        # Qualtrics: check for Questions container + NextButton (DOM-only, no JS API requirement)
-        if page.query_selector("#Questions") and page.query_selector("#NextButton"):
-            # Check for Qualtrics-specific DOM patterns (QuestionOuter, .Separator, etc.)
-            has_qualtrics_dom = page.query_selector(".QuestionOuter") or page.query_selector(".ChoiceStructure")
-            if has_qualtrics_dom:
+        url = page.url.lower()
+
+        # URL-based pre-detection (before DOM is fully rendered)
+        is_qualtrics_url = "qualtrics.com" in url
+
+        # Retry loop: core DOM elements may not be available immediately after navigation
+        for attempt in range(3):
+            # Qualtrics: check for Questions container + NextButton
+            has_questions = page.query_selector("#Questions") is not None
+            has_nextbtn = page.query_selector("#NextButton") is not None
+            has_question_outer = page.query_selector(".QuestionOuter") is not None
+            has_choice = page.query_selector(".ChoiceStructure") is not None
+
+            if (has_questions and has_nextbtn) and (has_question_outer or has_choice):
                 self._platform = Platform.QUALTRICS
                 logger.info("Detected platform: Qualtrics (DOM)")
                 return self._platform
-            # Retry after brief wait for JS rendering
-            page.wait_for_timeout(3000)
-            has_qualtrics_dom = page.query_selector(".QuestionOuter") or page.query_selector(".ChoiceStructure")
-            if has_qualtrics_dom:
+
+            # URL-based detection: Qualtrics URL + any Qualtrics DOM element
+            if is_qualtrics_url and (has_questions or has_question_outer or has_choice):
                 self._platform = Platform.QUALTRICS
-                logger.info("Detected platform: Qualtrics (DOM retry)")
+                logger.info("Detected platform: Qualtrics (URL + DOM)")
                 return self._platform
-            # Fallback: JS API check as last resort
-            has_qualtrics_js = page.evaluate(
+
+            # JS API check
+            if is_qualtrics_url and page.evaluate(
                 "typeof Qualtrics !== 'undefined' && Qualtrics.SurveyEngine != null"
-            )
-            if has_qualtrics_js:
+            ):
                 self._platform = Platform.QUALTRICS
                 logger.info("Detected platform: Qualtrics (JS API)")
                 return self._platform
-        
+
+            if attempt < 2:
+                page.wait_for_timeout(2500)
+
+        # Non-Qualtrics platform checks
         if page.query_selector("#vb_application"):
             self._platform = Platform.SURVEY_MACHINE
             logger.info("Detected platform: SurveyMachine")

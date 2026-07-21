@@ -343,14 +343,15 @@ When done answering everything, add a next_page action at the end."""
 
     def _click_next_js(self):
         """Click next via platform-specific JS or DOM click."""
-        # Try common survey platform next button selectors
+        # Try Qualtrics NextButton with retry for JS validation delay
         try:
-            # Qualtrics
             if self.page.locator("#NextButton").count() > 0:
-                if not self.page.locator("#NextButton").is_disabled():
-                    self.page.click("#NextButton", timeout=5000)
-                    self.page.wait_for_timeout(2000)
-                    return
+                for retry in range(5):
+                    if not self.page.locator("#NextButton").is_disabled():
+                        self.page.click("#NextButton", timeout=5000)
+                        self.page.wait_for_timeout(2000)
+                        return
+                    self.page.wait_for_timeout(800)
         except Exception:
             pass
 
