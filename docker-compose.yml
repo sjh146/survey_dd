@@ -3,22 +3,17 @@ services:
     build: .
     image: survey-dd:latest
     container_name: survey_dd
+    env_file:
+      - .env
     environment:
       - DEEPSEEK_API_KEY=${DEEPSEEK_API_KEY}
       - SURVEY_URL=${SURVEY_URL}
-    command: >
-      sh -c '
-        if [ -n "$$SURVEY_URL" ]; then
-          echo "Running survey: $$SURVEY_URL";
-          survey-auto -u "$$SURVEY_URL" --self-improve --timeout 30 --max-pages 500 --verbose
-        else
-          echo "SURVEY_URL not set. Usage: SURVEY_URL=... docker compose up survey";
-          survey-auto --help
-        fi
-      '
+      - TIMEOUT=${TIMEOUT:-30}
+      - MAX_PAGES=${MAX_PAGES:-500}
     volumes:
       - ./strategies:/app/strategies
       - survey-data:/app/.omo
+    restart: on-failure
     networks:
       - survey-net
 

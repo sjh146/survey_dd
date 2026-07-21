@@ -11,3 +11,5 @@ dist
 build
 .venv
 venv
+package.json
+package-lock.json

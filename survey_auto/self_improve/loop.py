@@ -11,7 +11,6 @@ from survey_auto.self_improve.deepseek_browser_agent import DeepSeekBrowserAgent
 
 logger = logging.getLogger(__name__)
 
-SAME_CONTENT_LIMIT = 12
 
 
 def _detect_and_fill_matrix(page) -> bool:
@@ -176,8 +175,6 @@ class SelfImproveLoop:
             agent = DeepSeekBrowserAgent(br.page)
             container = br.get_config().question_container
             pd, qd = 0, 0
-            prev_html = ""
-            same_count = 0
             fmt = pf.value if pf.value in ("surveymachine", "nielseniq", "qualtrics") else "kiwi"
             sp = load_ckpt(self.url) or 0
             if sp: logger.info("Resume from page %d", sp)

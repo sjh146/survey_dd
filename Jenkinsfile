@@ -1,111 +1,60 @@
 pipeline {
-    agent {
-        docker {
-            image 'survey-dd:latest'
-            args '-u root:root --network host --ipc=host'
-        }
-    }
+    agent any
 
     environment {
-        PYTHONPATH = "${WORKSPACE}"
         DEEPSEEK_API_KEY = credentials('deepseek-api-key')
-        SURVEY_URL = credentials('survey-test-url')
-        MAX_ATTEMPTS = '5'
-        MAX_PAGES = '500'
     }
 
     parameters {
-        string(name: 'SURVEY_URL', defaultValue: '', description: 'Override survey URL (optional)')
-        string(name: 'MAX_ATTEMPTS', defaultValue: '5', description: 'Max self-improve attempts')
-        booleanParam(name: 'COMMIT_ON_SUCCESS', defaultValue: true, description: 'Commit strategy/checkpoint changes on success')
+        string(name: 'SURVEY_URL', defaultValue: '', description: 'Qualtrics survey URL')
+        string(name: 'MAX_RETRIES', defaultValue: '10', description: 'Max CI/CD loop retries')
     }
 
     stages {
-        stage('Build Image') {
-            when {
-                expression { return !fileExists('/app/survey_auto/cli.py') }
-            }
-            steps {
-                sh 'docker build -t survey-dd:latest .'
-            }
-        }
-
-        stage('Lint') {
-            steps {
-                sh '''
-                    pip install ruff -q 2>/dev/null || true
-                    ruff check survey_auto/ --output-format=concuse --ignore=E501,F841 || true
-                '''
-            }
-        }
-
-        stage('Run Survey') {
+        stage('Infinite Learn Loop') {
             steps {
                 script {
-                    def url = params.SURVEY_URL ?: env.SURVEY_URL
+                    def url = params.SURVEY_URL
                     if (!url) {
-                        error "SURVEY_URL is required - set via parameter or Jenkins credential"
+                        error 'SURVEY_URL parameter is required'
                     }
-                    sh """
-                        echo "=== Running survey automation ==="
-                        echo "URL: ${url}"
-                        echo "Max attempts: ${env.MAX_ATTEMPTS}"
-                        python -m survey_auto.cli \\
-                            --self-improve \\
-                            --verbose \\
-                            -u "${url}" \\
-                            --timeout 120 \\
-                            --max-pages ${env.MAX_PAGES} \\
-                            -o /tmp/survey_result.log 2>&1
-                    """
-                }
-            }
-            post {
-                always {
-                    archiveArtifacts artifacts: '/tmp/survey_result.log', allowEmptyArchive: true
-                    sh 'cp /tmp/survey_result.log survey_result.log 2>/dev/null || true'
-                    archiveArtifacts artifacts: 'error_page_*.png', allowEmptyArchive: true
-                }
-            }
-        }
 
-        stage('Check & Improve') {
-            steps {
-                sh '''
-                    echo "=== Checking survey result ==="
-                    if grep -q "completed successfully" /tmp/survey_result.log 2>/dev/null; then
-                        echo "Survey completed successfully!"
-                    elif grep -q "Pages solved by AI" /tmp/survey_result.log 2>/dev/null; then
-                        echo "Survey partially completed with AI assistance"
-                    else
-                        echo "Survey FAILED - analyzing for improvements..."
-                        # Extract failure reason
-                        grep -i "error\\|fail\\|exception" /tmp/survey_result.log | tail -20 || true
-                    fi
-                '''
-            }
-        }
+                    def maxRetries = params.MAX_RETRIES.toInteger()
+                    def success = false
 
-        stage('Commit Strategy Updates') {
-            when {
-                branch 'main'
-                expression { params.COMMIT_ON_SUCCESS }
-            }
-            steps {
-                withCredentials([string(credentialsId: 'github-token', variable: 'GH_TOKEN')]) {
-                    sh '''
-                        set +x
-                        git config user.name "survey-bot"
-                        git config user.email "survey-bot@users.noreply.github.com"
-                        git add strategies/ survey_auto/ -A
-                        if git diff --cached --quiet; then
-                            echo "No changes to commit"
-                        else
-                            git commit -m "auto: survey strategy update [skip ci]"
-                            git remote set-url origin https://sjh146:${GH_TOKEN}@github.com/sjh146/survey_dd.git
-                            git push origin HEAD:main
-                        fi
-                    '''
+                    for (def attempt = 1; attempt <= maxRetries; attempt++) {
+                        echo "=== CI/CD Loop Attempt ${attempt}/${maxRetries} ==="
+
+                        // Step 1: Build Docker image
+                        sh 'docker build -t survey-dd:latest .'
+
+                        // Step 2: Run survey test
+                        def exitCode = sh(
+                            script: "docker run --rm -e DEEPSEEK_API_KEY=\"${DEEPSEEK_API_KEY}\" survey-dd:latest survey-auto -u \"${url}\" --self-improve --timeout 30 --max-pages 500 --verbose",
+                            returnStatus: true
+                        )
+
+                        if (exitCode == 0) {
+                            echo "=== Survey completed successfully on attempt ${attempt} ==="
+                            success = true
+                            break
+                        }
+
+                        echo "=== Attempt ${attempt} failed (exit code: ${exitCode}). Retrying... ==="
+
+                        // Step 3: Commit any strategy changes from self-improve
+                        sh '''
+                            git add strategies/ -A 2>/dev/null || true
+                            if ! git diff --cached --quiet 2>/dev/null; then
+                                git commit -m "auto-learn: strategy update from attempt" || true
+                                git push || true
+                            fi
+                        '''
+                    }
+
+                    if (!success) {
+                        error "Survey failed after ${maxRetries} attempts"
+                    }
                 }
             }
         }
@@ -113,14 +62,10 @@ pipeline {
 
     post {
         failure {
-            echo "=== Pipeline FAILED ==="
-            sh 'cat /tmp/survey_result.log 2>/dev/null | tail -50 || true'
+            echo '=== CI/CD Loop FAILED ==='
         }
         success {
-            echo "=== Pipeline SUCCEEDED ==="
-        }
-        always {
-            cleanWs()
+            echo '=== CI/CD Loop SUCCEEDED ==='
         }
     }
 }
