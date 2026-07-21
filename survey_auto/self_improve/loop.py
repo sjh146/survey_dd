@@ -206,6 +206,12 @@ class SelfImproveLoop:
                                 break
                         continue
 
+                    # Check if survey ended BEFORE trying to parse (e.g. Dynata redirect after submit)
+                    if nav.is_survey_ended():
+                        self._p_total += pd; self._q_total += qd
+                        return {"success": True, "pages": pd, "questions": qd,
+                                "ai_pages": self._ai_pages, "no_ai_pages": self._no_ai_pages}
+
                     # Try to parse questions from the page
                     try:
                         page_html = br.get_page_html()
@@ -227,6 +233,7 @@ class SelfImproveLoop:
                                 ex.fill_answers([q], [a]); qd += 1
 
                     if nav.is_survey_ended():
+                        self._p_total += pd; self._q_total += qd
                         return {"success": True, "pages": pd, "questions": qd,
                                 "ai_pages": self._ai_pages, "no_ai_pages": self._no_ai_pages}
 

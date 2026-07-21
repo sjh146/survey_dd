@@ -302,26 +302,20 @@ When done answering everything, add a next_page action at the end."""
             try:
                 if atype == "click" and args:
                     selector = args[0]
-                    # Escape special CSS characters (~, :, ., etc.) in the selector
-                    safe_selector = selector.replace('~', '\\~').replace(':', '\\:').replace('.', '\\.')
-                    # Evaluate if selector contains special chars that need JS-like querying
-                    use_js = any(c in selector for c in '~:. ')
-                    if use_js:
-                        # Use [id=] attribute selector for IDs with special characters
-                        if selector.startswith('#'):
-                            id_val = selector[1:]
-                            self.page.evaluate(f"""() => {{
-                                const el = document.querySelector('[id="{id_val}"]');
-                                if (el) {{
-                                    el.checked = true;
-                                    el.dispatchEvent(new Event('change', {{bubbles: true}}));
-                                    el.dispatchEvent(new Event('click', {{bubbles: true}}));
-                                    el.dispatchEvent(new Event('input', {{bubbles: true}}));
-                                }}
-                            }}""")
-                        else:
-                            self.page.click(safe_selector, force=True, timeout=5000)
+                    # Qualtrics radio buttons are hidden (display:none) — must use JS evaluate
+                    if any(c in selector for c in '~:. ') and selector.startswith('#'):
+                        id_val = selector[1:]
+                        self.page.evaluate(f"""() => {{
+                            const el = document.querySelector('[id="{id_val}"]');
+                            if (el) {{
+                                el.checked = true;
+                                el.dispatchEvent(new Event('change', {{bubbles: true}}));
+                                el.dispatchEvent(new Event('click', {{bubbles: true}}));
+                                el.dispatchEvent(new Event('input', {{bubbles: true}}));
+                            }}
+                        }}""")
                     else:
+                        safe_selector = selector.replace('~', '\\~').replace(':', '\\:').replace('.', '\\.')
                         self.page.click(safe_selector, force=True, timeout=5000)
                     self.page.wait_for_timeout(300)
                     executed += 1

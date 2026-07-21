@@ -73,25 +73,28 @@ class BrowserManager:
 
         page = self.page
         
-        # Qualtrics: check for Questions container + NextButton
+        # Qualtrics: check for Questions container + NextButton (DOM-only, no JS API requirement)
         if page.query_selector("#Questions") and page.query_selector("#NextButton"):
-            # Give Qualtrics JS a moment to initialize before checking
-            page.wait_for_timeout(2000)
-            has_qualtrics_js = page.evaluate(
-                "typeof Qualtrics !== 'undefined' && Qualtrics.SurveyEngine != null"
-            )
-            if has_qualtrics_js:
+            # Check for Qualtrics-specific DOM patterns (QuestionOuter, .Separator, etc.)
+            has_qualtrics_dom = page.query_selector(".QuestionOuter") or page.query_selector(".ChoiceStructure")
+            if has_qualtrics_dom:
                 self._platform = Platform.QUALTRICS
-                logger.info("Detected platform: Qualtrics")
+                logger.info("Detected platform: Qualtrics (DOM)")
                 return self._platform
-            # Retry once after waiting for potential redirect/initialization
+            # Retry after brief wait for JS rendering
             page.wait_for_timeout(3000)
+            has_qualtrics_dom = page.query_selector(".QuestionOuter") or page.query_selector(".ChoiceStructure")
+            if has_qualtrics_dom:
+                self._platform = Platform.QUALTRICS
+                logger.info("Detected platform: Qualtrics (DOM retry)")
+                return self._platform
+            # Fallback: JS API check as last resort
             has_qualtrics_js = page.evaluate(
                 "typeof Qualtrics !== 'undefined' && Qualtrics.SurveyEngine != null"
             )
             if has_qualtrics_js:
                 self._platform = Platform.QUALTRICS
-                logger.info("Detected platform: Qualtrics (retry)")
+                logger.info("Detected platform: Qualtrics (JS API)")
                 return self._platform
         
         if page.query_selector("#vb_application"):
