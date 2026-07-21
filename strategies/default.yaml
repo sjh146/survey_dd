@@ -7,9 +7,11 @@
 strategies:
   # 특정 변수명에 대한 직접 지정 (가장 높은 우선순위)
   by_variable:
-    # SQ01: { select: "first" }
-    # MQ01: { select: "random", max: 2 }
-    pass
+    # Qualtrics consent questions - 동의 필요 (value=1 = 예)
+    QR~QID1220363022: { select: ["1"] }
+    QR~QID1220363024: { select: ["1"] }
+    QR~QID1220363026: { select: ["1"] }
+    QR~QID1220363027: { select: ["1"] }
 
   # 질문 유형별 기본 전략
   by_type:

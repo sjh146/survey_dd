@@ -90,6 +90,31 @@ class NavigationController:
         except Exception:
             return None
 
+    def _next_page_qualtrics(self) -> bool:
+        """Navigate next page on Qualtrics by clicking #NextButton."""
+        next_btn = self._config.next_button  # "#NextButton"
+        try:
+            # Wait for NextButton to be enabled (not disabled)
+            self.page.wait_for_function(
+                f"!document.querySelector('{next_btn}')?.disabled",
+                timeout=5000,
+            )
+            self.page.click(next_btn)
+            self.page.wait_for_timeout(2000)
+
+            # Qualtrics navigates via AJAX - wait for page content to update
+            # Check if NextButton is still present (survey may have ended)
+            self.page.wait_for_timeout(1500)
+            self._pages_visited += 1
+            logger.info("Navigated to page %d (Qualtrics)", self._pages_visited)
+            return True
+        except Exception as exc:
+            msg = str(exc).lower()
+            if "closed" in msg or "target page" in msg:
+                raise SurveyCompleted(str(exc))
+            logger.warning("Qualtrics next page failed: %s", exc)
+            return False
+
     def next_page(self) -> bool:
         """Navigate to the next survey page.
 
@@ -101,6 +126,10 @@ class NavigationController:
 
         if self.is_survey_ended():
             return False
+
+        # Qualtrics: use button click instead of JS SurveyLoader
+        if self.platform == Platform.QUALTRICS:
+            return self._next_page_qualtrics()
 
         for attempt in range(1, MAX_RETRIES + 1):
             try:

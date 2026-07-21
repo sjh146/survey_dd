@@ -32,13 +32,10 @@ def _detect_and_fill_matrix(page) -> bool:
             if (!anyChecked && items.length > 0) {
                 const idx = Math.min(3, items.length - 1);
                 const radio = items[idx];
-                if (typeof $ !== 'undefined') {
-                    $(radio).prop('checked', true).trigger('change').trigger('click');
-                } else {
-                    radio.checked = true;
-                    radio.dispatchEvent(new Event('change', {bubbles: true}));
-                    radio.dispatchEvent(new Event('click', {bubbles: true}));
-                }
+                radio.checked = true;
+                radio.dispatchEvent(new Event('change', {bubbles: true}));
+                radio.dispatchEvent(new Event('click', {bubbles: true}));
+                radio.dispatchEvent(new Event('input', {bubbles: true}));
                 anyFilled = true;
             }
         }
@@ -174,8 +171,6 @@ class SelfImproveLoop:
         try:
             br.start(); br.navigate(self.url)
             pf = br.detect_platform(); logger.info("Platform: %s", pf.value)
-            if not br.wait_for_question(timeout=self.timeout * 1000):
-                return {"success": False, "error": "Question body did not render"}
             nav = NavigationController(br.page, pf, max_pages=self.max_pages)
             ex = ActionExecutor(br.page)
             agent = DeepSeekBrowserAgent(br.page)
@@ -183,9 +178,19 @@ class SelfImproveLoop:
             pd, qd = 0, 0
             prev_html = ""
             same_count = 0
-            fmt = pf.value if pf.value in ("surveymachine", "nielseniq") else "kiwi"
+            fmt = pf.value if pf.value in ("surveymachine", "nielseniq", "qualtrics") else "kiwi"
             sp = load_ckpt(self.url) or 0
             if sp: logger.info("Resume from page %d", sp)
+
+            # If standard question container doesn't render, try DeepSeek directly
+            if not br.wait_for_question(timeout=15000):
+                logger.warning("Question container did not render, delegating to DeepSeek")
+                result = agent.solve_page(progress_pct=None, page_num=pd)
+                if result.get("success") and result.get("page_changed"):
+                    logger.info("DeepSeek handled initial page: %s->%s", result.get("prev_qnum"), result.get("new_qnum"))
+                    self._ai_pages += 1; pd += 1
+                else:
+                    return {"success": False, "error": "Question body did not render and DeepSeek could not handle it"}
 
             while True:
                 try:
@@ -201,7 +206,19 @@ class SelfImproveLoop:
                                 break
                         continue
 
-                    qs = SurveyParser(br.get_page_html(), platform=fmt).parse()
+                    # Try to parse questions from the page
+                    try:
+                        page_html = br.get_page_html()
+                    except Exception:
+                        logger.warning("get_page_html failed (container may have changed), delegating to DeepSeek")
+                        result = agent.solve_page(progress_pct=nav.get_progress(), page_num=pd)
+                        if result.get("success") and result.get("page_changed"):
+                            pd += 1; self._ai_pages += 1; save_ckpt(pd, self.url)
+                            continue
+                        else:
+                            break
+
+                    qs = SurveyParser(page_html, platform=fmt).parse()
                     if qs:
                         for q in qs:
                             if q.options or q.text_inputs:

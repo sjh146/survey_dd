@@ -28,6 +28,7 @@ class Platform(str, Enum):
     KIWI = "kiwi"
     SURVEY_MACHINE = "surveymachine"
     NIELSEN_IQ = "nielseniq"
+    QUALTRICS = "qualtrics"
     AUTO = "auto"
 
 
@@ -67,6 +68,14 @@ PLATFORM_CONFIGS: dict[Platform, SurveyConfig] = {
         loader_selector=".loading, .survey-loading",
         progress_selector=".progress-bar, .survey-progress",
         end_patterns=("complete", "thank", "END"),
+    ),
+    Platform.QUALTRICS: SurveyConfig(
+        question_container="#Questions",
+        next_button="#NextButton",
+        prev_button="#PreviousButton",
+        loader_selector="",
+        progress_selector="",
+        end_patterns=("surveyend", "endofsurvey", "complete", "EndOfSurvey"),
     ),
 }
 

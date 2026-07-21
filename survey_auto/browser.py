@@ -72,6 +72,28 @@ class BrowserManager:
             return self._platform
 
         page = self.page
+        
+        # Qualtrics: check for Questions container + NextButton
+        if page.query_selector("#Questions") and page.query_selector("#NextButton"):
+            # Give Qualtrics JS a moment to initialize before checking
+            page.wait_for_timeout(2000)
+            has_qualtrics_js = page.evaluate(
+                "typeof Qualtrics !== 'undefined' && Qualtrics.SurveyEngine != null"
+            )
+            if has_qualtrics_js:
+                self._platform = Platform.QUALTRICS
+                logger.info("Detected platform: Qualtrics")
+                return self._platform
+            # Retry once after waiting for potential redirect/initialization
+            page.wait_for_timeout(3000)
+            has_qualtrics_js = page.evaluate(
+                "typeof Qualtrics !== 'undefined' && Qualtrics.SurveyEngine != null"
+            )
+            if has_qualtrics_js:
+                self._platform = Platform.QUALTRICS
+                logger.info("Detected platform: Qualtrics (retry)")
+                return self._platform
+        
         if page.query_selector("#vb_application"):
             self._platform = Platform.SURVEY_MACHINE
             logger.info("Detected platform: SurveyMachine")
@@ -109,11 +131,20 @@ class BrowserManager:
                 state="attached",
                 timeout=timeout_ms,
             )
-            # Wait for child elements (questions are dynamically rendered)
-            self.page.wait_for_function(
-                f"document.querySelector('{selector}')?.children.length > 0",
-                timeout=timeout_ms,
-            )
+
+            # Qualtrics: wait for actual .QuestionOuter (informational-only pages have no inputs)
+            if self._platform == Platform.QUALTRICS:
+                self.page.wait_for_selector(
+                    ".QuestionOuter",
+                    state="attached",
+                    timeout=timeout_ms,
+                )
+            else:
+                # Wait for child elements (questions are dynamically rendered)
+                self.page.wait_for_function(
+                    f"document.querySelector('{selector}')?.children.length > 0",
+                    timeout=timeout_ms,
+                )
             self.page.wait_for_timeout(1500)
             return True
         except Exception as exc:

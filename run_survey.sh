@@ -8,7 +8,7 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-IMAGE_NAME="survey-dd-survey"
+IMAGE_NAME="survey-dd:latest"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ─── Defaults ────────────────────────────────────────────────────────────────
@@ -135,7 +135,7 @@ DOCKER_CMD=(
   -v "$SCRIPT_DIR":/app/data
   --name "survey-run-$(date +%s)"
   "$IMAGE_NAME"
-  survey-auto run
+  survey-auto
   -u "$URL"
   --self-improve
   --platform "$PLATFORM"

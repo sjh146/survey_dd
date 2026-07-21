@@ -42,6 +42,49 @@ class ActionExecutor:
     def __init__(self, page: Page):
         self.page = page
 
+    def _js_select_radio(self, variable: str, value: str) -> bool:
+        """Select a radio button via JavaScript (handles hidden inputs like Qualtrics)."""
+        return self.page.evaluate("""({ variable, value }) => {
+            const radio = document.querySelector(
+                `input[type="radio"][name="${variable}"][value="${value}"]`
+            );
+            if (!radio) return false;
+            radio.checked = true;
+            radio.dispatchEvent(new Event('change', { bubbles: true }));
+            radio.dispatchEvent(new Event('click', { bubbles: true }));
+            radio.dispatchEvent(new Event('input', { bubbles: true }));
+            // Also click the associated label for frameworks that listen on labels
+            const label = document.querySelector(`label[for="${radio.id}"]`);
+            if (label) label.click();
+            return true;
+        }""", {"variable": variable, "value": value})
+
+    def _js_check_checkbox(self, variable: str, value: str) -> bool:
+        """Check a checkbox via JavaScript (handles hidden inputs)."""
+        return self.page.evaluate("""({ variable, value }) => {
+            const cb = document.querySelector(
+                `input[type="checkbox"][name="${variable}"][value="${value}"]`
+            );
+            if (!cb) {
+                // Try Qualtrics-style: name="${variable}_${value}"
+                const cb2 = document.querySelector(
+                    `input[type="checkbox"][name*="${variable}"][value="${value}"]`
+                );
+                if (!cb2) return false;
+                cb2.checked = true;
+                cb2.dispatchEvent(new Event('change', { bubbles: true }));
+                cb2.dispatchEvent(new Event('click', { bubbles: true }));
+                return true;
+            }
+            cb.checked = true;
+            cb.dispatchEvent(new Event('change', { bubbles: true }));
+            cb.dispatchEvent(new Event('click', { bubbles: true }));
+            cb.dispatchEvent(new Event('input', { bubbles: true }));
+            const label = document.querySelector(`label[for="${cb.id}"]`);
+            if (label) label.click();
+            return true;
+        }""", {"variable": variable, "value": value})
+
     def fill_answers(self, questions: list[Question], answers: list[Answer]) -> None:
         """Apply all answers to the page DOM."""
         for question, answer in zip(questions, answers):
@@ -74,7 +117,14 @@ class ActionExecutor:
                 return
             selector = _radio_value_selector(question.variable, selected)
             if self.page.locator(selector).count() > 0:
-                self.page.click(selector)
+                try:
+                    # Try Playwright click first (works for visible radios)
+                    self.page.click(selector, timeout=2000)
+                except Exception:
+                    # Fallback: JS evaluation for hidden radios (Qualtrics, etc.)
+                    if not self._js_select_radio(question.variable, selected):
+                        logger.warning("Radio %s not found for %s (JS fallback)", selected, question.variable)
+                        continue
                 time.sleep(ACTION_DELAY)
                 self._fill_etc_if_needed(question, selected, answer)
                 logger.debug("Selected %s = %s", question.variable, selected)
@@ -86,7 +136,12 @@ class ActionExecutor:
         for selected in answer.selected_values:
             selector = _checkbox_value_selector(question.variable, selected)
             if self.page.locator(selector).count() > 0:
-                self.page.check(selector)
+                try:
+                    self.page.check(selector, timeout=2000)
+                except Exception:
+                    if not self._js_check_checkbox(question.variable, selected):
+                        logger.warning("Checkbox %s not found for %s (JS fallback)", selected, question.variable)
+                        continue
                 time.sleep(ACTION_DELAY)
                 self._fill_etc_if_needed(question, selected, answer)
                 logger.debug("Checked %s = %s", question.variable, selected)

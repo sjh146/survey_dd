@@ -360,10 +360,160 @@ def _sm_extract_text_inputs(box_html: str, variable: str) -> list[TextInput]:
 # ── Main parser (platform-aware) ──────────────────────────────────
 
 
+# ── Qualtrics parser ────────────────────────────────────────────
+
+
+def _qt_extract_questions(html: str) -> list[Question]:
+    """Parse Qualtrics #Questions HTML into Question objects.
+
+    Handles .QuestionOuter blocks containing radio/checkbox inputs.
+    Informational-only blocks (no inputs, e.g. privacy text) are skipped.
+    """
+    questions: list[Question] = []
+    # Match each QuestionOuter block
+    qouter_pattern = re.compile(
+        r'<div[^>]*class=["\'][^"\']*QuestionOuter[^"\']*["\'][^>]*>.*?</div>\s*</div>\s*</div>\s*</div>\s*</fieldset>\s*</div>\s*</div>\s*</div>',
+        re.DOTALL | re.IGNORECASE,
+    )
+    # Fallback: simpler block extraction
+    for qouter_match in re.finditer(
+        r'<div[^>]*class=["\'][^"\']*QuestionOuter[^"\']*["\'][^>]*>',
+        html,
+        re.IGNORECASE,
+    ):
+        start = qouter_match.start()
+        # Find the balancing </div> that closes this QuestionOuter
+        # Qouter structure: div.QuestionOuter > div.Inner > div.InnerInner > fieldset > ...
+        depth = 1
+        i = start + len(qouter_match.group(0))
+        while i < len(html):
+            div_start = html.find('<', i)
+            if div_start == -1:
+                block_html = html[start:]
+                break
+            tag_end = html.find('>', div_start)
+            if tag_end == -1:
+                block_html = html[start:]
+                break
+            tag = html[div_start:tag_end + 1]
+            i = tag_end + 1
+
+            # Only count <div> tags (opening and closing) for depth tracking
+            is_div_open = (tag.startswith('<div') and not tag.startswith('</div')
+                           and not tag.endswith('/>'))
+            is_div_close = tag.startswith('</div')
+
+            if is_div_open:
+                depth += 1
+            elif is_div_close:
+                depth -= 1
+                if depth <= 0:
+                    block_html = html[start:i]
+                    break
+        else:
+            block_html = html[start:]
+
+        # Skip blocks without radio/checkbox inputs
+        if 'type="radio"' not in block_html.lower() and 'type="checkbox"' not in block_html.lower():
+            continue
+
+        # Extract question text from .QuestionText
+        title = ""
+        title_match = re.search(
+            r'<div[^>]*class=["\'][^"\']*QuestionText[^"\']*["\'][^>]*>(.*?)</div>',
+            block_html,
+            re.DOTALL | re.IGNORECASE,
+        )
+        if title_match:
+            title = re.sub(r'<[^>]+>', '', title_match.group(1)).strip()
+            title = re.sub(r'\s+', ' ', title)[:200]
+
+        # Extract variable name from first radio/checkbox input
+        variable = None
+        var_match = re.search(
+            r'<input[^>]*type=["\'](?:radio|checkbox)["\'][^>]*name=["\']([^"\']+)["\']',
+            block_html,
+            re.IGNORECASE,
+        )
+        if var_match:
+            variable = var_match.group(1)
+
+        if not variable:
+            # Try to use QID from the outer div id
+            qid_match = re.search(r'id=["\'](QID\d+)["\']', block_html)
+            if qid_match:
+                variable = qid_match.group(1)
+
+        if not variable:
+            continue
+
+        # Detect question type
+        is_checkbox = 'type="checkbox"' in block_html.lower()
+        qtype = QuestionType.MULTI if is_checkbox else QuestionType.SINGLE
+
+        # Extract options
+        options: list[Option] = []
+        # Match each <li class="Selection ..."> inside ChoiceStructure
+        li_pattern = re.compile(
+            r'<li[^>]*class=["\'][^"\']*Selection[^"\']*["\'][^>]*>(.*?)</li>',
+            re.DOTALL | re.IGNORECASE,
+        )
+        for li_match in li_pattern.finditer(block_html):
+            li_html = li_match.group(1)
+
+            input_match = re.search(
+                r'<input[^>]*type=["\'](?:radio|checkbox)["\'][^>]*value=["\']([^"\']+)["\']',
+                li_html,
+                re.IGNORECASE,
+            )
+            if not input_match:
+                continue
+            value = input_match.group(1)
+
+            # Extract label text: look for span.LabelWrapper > label > span text
+            label = ""
+            label_span = re.search(
+                r'<span[^>]*class=["\'][^"\']*LabelWrapper[^"\']*["\'][^>]*>.*?<label[^>]*>.*?<span>(.*?)</span>',
+                li_html,
+                re.DOTALL | re.IGNORECASE,
+            )
+            if label_span:
+                label = re.sub(r'<[^>]+>', '', label_span.group(1)).strip()
+            if not label:
+                # Fallback: get any text content
+                label = re.sub(r'<[^>]+>', ' ', li_html).strip()
+                label = re.sub(r'\s+', ' ', label)[:100]
+
+            options.append(Option(value=value, label=label[:100]))
+
+        # Check for text inputs (open-ended questions)
+        text_inputs = None
+        if 'type="text"' in block_html.lower() or 'type="number"' in block_html.lower():
+            text_inputs = []
+            for inp_match in re.finditer(
+                r'<input[^>]*type=["\'](text|number)["\'][^>]*name=["\']([^"\']+)["\']',
+                block_html,
+                re.IGNORECASE,
+            ):
+                inp_type = inp_match.group(1)
+                inp_name = inp_match.group(2)
+                text_inputs.append(TextInput(name=inp_name, label="", input_type=inp_type))
+
+        questions.append(Question(
+            variable=variable,
+            qtype=qtype,
+            options=options,
+            text_inputs=text_inputs,
+            title=title,
+        ))
+
+    return questions
+
+
 class SurveyParser:
     """Parses survey question HTML into structured Question objects.
 
-    Supports both KiwiSurvey and SurveyMachine HTML formats.
+    Supports KiwiSurvey, SurveyMachine, and Qualtrics HTML formats.
     """
 
     def __init__(self, html: str, platform: str = "kiwi"):
@@ -379,7 +529,13 @@ class SurveyParser:
             return self._parse_surveymachine()
         if self.platform == "nielseniq":
             return self._parse_nielseniq()
+        if self.platform == "qualtrics":
+            return self._parse_qualtrics()
         return self._parse_kiwi()
+
+    def _parse_qualtrics(self) -> list[Question]:
+        """Parse Qualtrics format HTML."""
+        return _qt_extract_questions(self.html)
 
     def _parse_surveymachine(self) -> list[Question]:
         """Parse SurveyMachine format HTML."""

@@ -302,22 +302,27 @@ When done answering everything, add a next_page action at the end."""
             try:
                 if atype == "click" and args:
                     selector = args[0]
-                    is_radio = selector.startswith("#Q") and selector[-1].isdigit()
-                    if is_radio:
-                        self.page.evaluate(f"""() => {{
-                            const el = document.querySelector('{selector}');
-                            if (el) {{
-                                if (typeof $ !== 'undefined') {{
-                                    $(el).prop('checked', true).trigger('change').trigger('click');
-                                }} else {{
+                    # Escape special CSS characters (~, :, ., etc.) in the selector
+                    safe_selector = selector.replace('~', '\\~').replace(':', '\\:').replace('.', '\\.')
+                    # Evaluate if selector contains special chars that need JS-like querying
+                    use_js = any(c in selector for c in '~:. ')
+                    if use_js:
+                        # Use [id=] attribute selector for IDs with special characters
+                        if selector.startswith('#'):
+                            id_val = selector[1:]
+                            self.page.evaluate(f"""() => {{
+                                const el = document.querySelector('[id="{id_val}"]');
+                                if (el) {{
                                     el.checked = true;
                                     el.dispatchEvent(new Event('change', {{bubbles: true}}));
                                     el.dispatchEvent(new Event('click', {{bubbles: true}}));
+                                    el.dispatchEvent(new Event('input', {{bubbles: true}}));
                                 }}
-                            }}
-                        }}""")
+                            }}""")
+                        else:
+                            self.page.click(safe_selector, force=True, timeout=5000)
                     else:
-                        self.page.click(selector, force=True, timeout=5000)
+                        self.page.click(safe_selector, force=True, timeout=5000)
                     self.page.wait_for_timeout(300)
                     executed += 1
                 elif atype == "type" and len(args) >= 2:
@@ -343,7 +348,18 @@ When done answering everything, add a next_page action at the end."""
         return {"success": executed > 0, "actions_executed": executed, "reasoning": reasoning}
 
     def _click_next_js(self):
-        """Click next via SurveyLoader.next() JS call — more reliable than DOM click."""
+        """Click next via platform-specific JS or DOM click."""
+        # Try common survey platform next button selectors
+        try:
+            # Qualtrics
+            if self.page.locator("#NextButton").count() > 0:
+                if not self.page.locator("#NextButton").is_disabled():
+                    self.page.click("#NextButton", timeout=5000)
+                    self.page.wait_for_timeout(2000)
+                    return
+        except Exception:
+            pass
+
         try:
             self.page.evaluate("() => { if (typeof SurveyLoader !== 'undefined') SurveyLoader.next(); }")
             self.page.wait_for_timeout(2000)
@@ -352,7 +368,7 @@ When done answering everything, add a next_page action at the end."""
             logger.warning("SurveyLoader.next() failed: %s", e)
 
         # Fallback: DOM click
-        for selector in ["#btn_next", "#next", "button[type='submit']"]:
+        for selector in ["#btn_next", "#next", "button[type='submit']", "#NextButton"]:
             try:
                 if self.page.locator(selector).count() > 0:
                     self.page.click(selector, timeout=5000)
@@ -361,8 +377,26 @@ When done answering everything, add a next_page action at the end."""
             except Exception:
                 continue
 
+        # Last resort: click any visible button with "next" or "다음" in text
+        try:
+            self.page.evaluate("""() => {
+                const btns = document.querySelectorAll('button, input[type=button], input[type=submit]');
+                for (const btn of btns) {
+                    const text = (btn.textContent || btn.value || '').toLowerCase();
+                    if (!btn.disabled && btn.offsetParent !== null &&
+                        (text.includes('next') || text.includes('다음') || text.includes('>>'))) {
+                        btn.click();
+                        return true;
+                    }
+                }
+                return false;
+            }""")
+            self.page.wait_for_timeout(2000)
+        except Exception:
+            pass
+
     def _auto_fill_unanswered(self) -> int:
-        """Select first available option in any radio group that has no selection. Uses jQuery for SurveyLoader compat."""
+        """Select first available option in any radio group that has no selection."""
         filled = self.page.evaluate("""() => {
             let count = 0;
             const radios = document.querySelectorAll('input[type=radio]');
@@ -376,13 +410,10 @@ When done answering everything, add a next_page action at the end."""
                 if (!anyChecked && items.length > 0) {
                     const idx = Math.min(2, items.length - 1);
                     const radio = items[idx];
-                    if (typeof $ !== 'undefined') {
-                        $(radio).prop('checked', true).trigger('change').trigger('click');
-                    } else {
-                        radio.checked = true;
-                        radio.dispatchEvent(new Event('change', {bubbles: true}));
-                        radio.dispatchEvent(new Event('click', {bubbles: true}));
-                    }
+                    radio.checked = true;
+                    radio.dispatchEvent(new Event('change', {bubbles: true}));
+                    radio.dispatchEvent(new Event('click', {bubbles: true}));
+                    radio.dispatchEvent(new Event('input', {bubbles: true}));
                     count++;
                 }
             }

@@ -5,3 +5,9 @@ __pycache__/
 /tmp/
 error_page_*.png
 .omo/evidence/
+node_modules/
+*.egg-info
+dist
+build
+.venv
+venv
